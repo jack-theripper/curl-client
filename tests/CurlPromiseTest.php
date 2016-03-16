@@ -1,8 +1,8 @@
 <?php
 namespace Http\Client\Curl\Tests;
 
-use Http\Client\Curl\CurlPromise;
-use Http\Client\Curl\MultiRunner;
+use Mackey\Http\Client\Curl\CurlPromise;
+use Mackey\Http\Client\Curl\MultiRunner;
 use Http\Client\Exception\TransferException;
 use Http\Promise\Promise;
 

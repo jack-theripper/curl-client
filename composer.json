@@ -8,6 +8,10 @@
         {
             "name": "Михаил Красильников",
             "email": "m.krasilnikov@yandex.ru"
+        },
+        {
+            "name": "Dmitry Arhitector",
+            "email": "dmitry.arhitector@yandex.ru"
         }
     ],
     "prefer-stable": true,

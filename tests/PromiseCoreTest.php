@@ -1,7 +1,7 @@
 <?php
 namespace Http\Client\Curl\Tests;
 
-use Http\Client\Curl\PromiseCore;
+use Mackey\Http\Client\Curl\PromiseCore;
 use Http\Client\Exception;
 use Http\Client\Exception\RequestException;
 use Http\Promise\Promise;

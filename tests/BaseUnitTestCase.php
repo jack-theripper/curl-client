@@ -1,7 +1,7 @@
 <?php
 namespace Http\Client\Curl\Tests;
 
-use Http\Client\Curl\PromiseCore;
+use Mackey\Http\Client\Curl\PromiseCore;
 use Http\Discovery\MessageFactoryDiscovery;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;

@@ -1,7 +1,7 @@
 <?php
 namespace Http\Client\Curl\Tests;
 
-use Http\Client\Curl\Client;
+use Mackey\Http\Client\Curl\Client;
 use Http\Client\HttpClient;
 use Http\Message\MessageFactory\GuzzleMessageFactory;
 use Http\Message\StreamFactory\GuzzleStreamFactory;
