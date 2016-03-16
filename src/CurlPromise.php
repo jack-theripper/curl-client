@@ -1,5 +1,5 @@
 <?php
-namespace Http\Client\Curl;
+namespace Mackey\Http\Client\Curl;
 
 use Http\Client\Exception;
 use Http\Promise\Promise;

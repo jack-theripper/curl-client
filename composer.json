@@ -1,5 +1,5 @@
 {
-    "name": "php-http/curl-client",
+    "name": "arhitector/http-curl-client",
     "description": "cURL client for PHP-HTTP",
     "license": "MIT",
     "keywords": ["http", "curl"],
@@ -29,7 +29,7 @@
     },
     "autoload": {
         "psr-4": {
-            "Http\\Client\\Curl\\": "src/"
+            "Mackey\\Http\\Client\\Curl\\": "src/"
         }
     },
     "autoload-dev": {

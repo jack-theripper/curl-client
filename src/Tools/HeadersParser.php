@@ -1,6 +1,6 @@
 <?php
 
-namespace Http\Client\Curl\Tools;
+namespace Mackey\Http\Client\Curl\Tools;
 
 use Psr\Http\Message\ResponseInterface;
 

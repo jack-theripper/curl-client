@@ -1,11 +1,11 @@
 <?php
 
-namespace Http\Client\Curl;
+namespace Mackey\Http\Client\Curl;
 
 use Http\Client\Exception;
 use Http\Client\Exception\RequestException;
-use Http\Client\HttpAsyncClient;
-use Http\Client\HttpClient;
+use Http\Client\HttpAsyncClient as HttpAsyncClientInterface;
+use Http\Client\HttpClient as HttpClientInterface;
 use Http\Message\MessageFactory;
 use Http\Message\StreamFactory;
 use Http\Promise\Promise;
@@ -20,19 +20,9 @@ use Psr\Http\Message\ResponseInterface;
  * @author  Михаил Красильников <m.krasilnikov@yandex.ru>
  * @author  Blake Williams <github@shabbyrobe.org>
  * @author  Dmitry Arhitector <dmitry.arhitector@yandex.ru>
- *
- * @api
- * @since   1.0
  */
-class Client implements HttpClient, HttpAsyncClient
+class Client extends AbstractClient implements HttpClientInterface, HttpAsyncClientInterface
 {
-
-	/**
-     * cURL options
-     *
-     * @var array
-     */
-    protected $options;
 
     /**
      * cURL response parser
@@ -59,23 +49,15 @@ class Client implements HttpClient, HttpAsyncClient
     /**
      * Create new client
      *
-     * Available options:
-     *
-     * - connection_timeout : int —  connection timeout in seconds;
-     * - curl_options: array — custom cURL options;
-     * - ssl_verify_peer : bool — verify peer when using SSL;
-     * - timeout : int —  overall timeout in seconds.
-     *
      * @param MessageFactory $messageFactory HTTP Message factory
      * @param StreamFactory  $streamFactory  HTTP Stream factory
      * @param array          $options        cURL options (see http://php.net/curl_setopt)
-     *
-     * @since 1.0
      */
     public function __construct(MessageFactory $messageFactory, StreamFactory $streamFactory, array $options = [])
     {
-        $this->responseParser = new ResponseParser($messageFactory, $streamFactory);
         $this->options = $options;
+        $this->handle = curl_init();
+        $this->setResponseParser(new ResponseParser($messageFactory, $streamFactory));
     }
 
     /**
@@ -88,19 +70,12 @@ class Client implements HttpClient, HttpAsyncClient
      *
      * @throws \UnexpectedValueException if unsupported HTTP version requested
      * @throws RequestException
-     *
-     * @since 1.0
      */
     public function sendRequest(RequestInterface $request, array $options = [])
     {
-        if (is_resource($this->handle)) {
-            curl_reset($this->handle);
-        } else {
-            $this->handle = curl_init();
-        }
+        $options = $this->createCurlOptions($request, $options + $this->options);
 
-        $options = $this->createCurlOptions($request, $options);
-
+        curl_reset($this->handle);
         curl_setopt_array($this->handle, $options);
 
         if ( ! curl_exec($this->handle)) {
@@ -112,6 +87,7 @@ class Client implements HttpClient, HttpAsyncClient
         } catch (\Exception $e) {
             throw new RequestException($e->getMessage(), $request, $e);
         }
+
         return $response;
     }
 
@@ -148,6 +124,20 @@ class Client implements HttpClient, HttpAsyncClient
     }
 
     /**
+     * Set response parser
+     *
+     * @param ResponseParser $responseParser
+     *
+     * @return $this
+     */
+    public function setResponseParser(ResponseParser $responseParser)
+    {
+        $this->responseParser = $responseParser;
+
+        return $this;
+    }
+
+    /**
      * Get parser
      *
      * @return ResponseParser
@@ -180,9 +170,10 @@ class Client implements HttpClient, HttpAsyncClient
     protected function createCurlOptions(RequestInterface $request, array $options = [])
 	{
         // Invalid overwrite Curl options.
-        $options = array_diff_key($options + $this->options, array_flip([CURLOPT_INFILE, CURLOPT_INFILESIZE]));
-        $options[CURLOPT_HTTP_VERSION] = $this->getProtocolVersion($request->getProtocolVersion());
+        $options = array_diff_key($options, array_flip([CURLOPT_INFILE, CURLOPT_INFILESIZE]));
+        $options[CURLOPT_HTTP_VERSION] = $this->getCurlHttpVersion($request->getProtocolVersion());
         $options[CURLOPT_HEADERFUNCTION] = [$this->getResponseParser(), 'headerHandler'];
+        $options[CURLOPT_CUSTOMREQUEST] = $request->getMethod();
         $options[CURLOPT_URL] = (string) $request->getUri();
         $options[CURLOPT_RETURNTRANSFER] = false;
         $options[CURLOPT_FILE] = $this->getResponseParser()->getTemporaryStream();
@@ -221,10 +212,6 @@ class Client implements HttpClient, HttpAsyncClient
 			}
 		}
 
-		if ($request->getMethod() != 'GET') {
-			$options[CURLOPT_CUSTOMREQUEST] = $request->getMethod();
-		}
-
 		$options[CURLOPT_HTTPHEADER] = $this->createHeaders($request, $options);
 
 		if ($request->getUri()->getUserInfo()) {
@@ -237,28 +224,25 @@ class Client implements HttpClient, HttpAsyncClient
     /**
      * Return cURL constant for specified HTTP version
      *
-     * @param string $requestVersion
+     * @param string $version
      *
      * @throws \UnexpectedValueException if unsupported version requested
      *
      * @return int
      */
-    protected function getProtocolVersion($requestVersion)
+    protected function getCurlHttpVersion($version)
     {
-        switch ($requestVersion) {
-            case '1.0':
-                return CURL_HTTP_VERSION_1_0;
-            case '1.1':
-                return CURL_HTTP_VERSION_1_1;
-            case '2.0':
-                if (defined('CURL_HTTP_VERSION_2_0')) {
-                    return CURL_HTTP_VERSION_2_0;
-                }
-
+        if ($version == '1.1') {
+            return CURL_HTTP_VERSION_1_1;
+        } else if ($version == '2.0') {
+            if (!defined('CURL_HTTP_VERSION_2_0')) {
                 throw new \UnexpectedValueException('libcurl 7.33 needed for HTTP 2.0 support');
-        }
+            }
 
-        return CURL_HTTP_VERSION_NONE;
+            return CURL_HTTP_VERSION_2_0;
+        } else {
+            return CURL_HTTP_VERSION_1_0;
+        }
     }
 
     /**
@@ -271,34 +255,25 @@ class Client implements HttpClient, HttpAsyncClient
      */
     protected function createHeaders(RequestInterface $request, array $options)
     {
-        $curlHeaders = [];
-        $headers = array_keys($request->getHeaders());
+        $headers = [];
+
+        foreach ($request->getHeaders() as $header => $values)
+        {
+            foreach ((array) $values as $value)
+            {
+                $headers[] = sprintf('%s: %s', $header, $value);
+            }
+        }
+
+        if ( ! $request->hasHeader('Content-Length')) {
+        //    $headers[] = 'Content-Length: 0';
+        }
 
         if ( ! $request->hasHeader('Expect')) {
-            $curlHeaders[] = 'Expect:';
+            $headers[] = 'Expect:';
         }
 
-        if ( ! $request->hasHeader('Accept')) {
-            $curlHeaders[] = 'Accept: */*';
-        }
-
-        foreach ($headers as $name) {
-            if (strtolower($name) === 'content-length') {
-                $values = [0];
-
-                if (array_key_exists(CURLOPT_POSTFIELDS, $options)) {
-                    $values = [strlen($options[CURLOPT_POSTFIELDS])];
-                }
-            } else {
-                $values = $request->getHeader($name);
-            }
-
-            foreach ($values as $value) {
-                $curlHeaders[] = $name. ': '.$value;
-            }
-        }
-
-        return $curlHeaders;
+        return $headers;
     }
 
 }

@@ -1,8 +1,8 @@
 <?php
 
-namespace Http\Client\Curl;
+namespace Mackey\Http\Client\Curl;
 
-use Http\Client\Curl\Tools\HeadersParser;
+use Mackey\Http\Client\Curl\Tools\HeadersParser;
 use Http\Message\MessageFactory;
 use Http\Message\StreamFactory;
 use Psr\Http\Message\ResponseInterface;
@@ -133,23 +133,23 @@ class ResponseParser
      * Save the response headers
      * 
      * @param   resource    $handler    curl handler
-     * @param   string      $header     raw header
+     * @param   string      $rawHeader     raw header
      * 
      * @return integer
      */
-    public function headerHandler($handler, $header)
+    public function headerHandler($handler, $rawHeader)
     {
+        $header = trim($rawHeader);
         $this->headers[] = $header;
 
         if ($this->followLocation) {
             $this->followLocation = false;
             $this->headers = [$header];
-        } else if ( ! trim($header)) {
+        } else if ( ! $header) {
             $this->followLocation = true;
-            //$this->parse(null, []);
         }
 
-        return strlen($header);
+        return strlen($rawHeader);
     }
 
 }
