@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.0 - 2016-03-16
+
+- Fix: transfer of very large body
+- More user-friendly design
+
 ## 1.1.0 - 2016-01-29
 
 ### Changed
