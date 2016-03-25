@@ -1,9 +1,20 @@
 # Change Log
 
+## 1.3.0 - 2016-03-25
+
+- Full support of native streaming filters.
+- Fixed bug with queues in async request.
+- Support of an native option "CURLOPT_FOLLOWLOCATION".
+- Support send "PSR-7 Response".
+- More correct support of header "Expect".
+
 ## 1.2.0 - 2016-03-16
 
-- Fix: transfer of very large body
-- More user-friendly design
+- Fix: transfer of very large body.
+- More user-friendly design.
+- Support custom method.
+- You can use options "CURLOPT_READFUNCTION" and "CURLOPT_WRITEFUNCTION".
+- Inheritance support.
 
 ## 1.1.0 - 2016-01-29
 

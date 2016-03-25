@@ -1,22 +1,22 @@
 <?php
 
-namespace Mackey\Http\Client\Curl;
+namespace Mackey\Http\Client\Curl\Response;
 
 use Mackey\Http\Client\Curl\Tools\HeadersParser;
+use Psr\Http\Message\ResponseInterface;
 use Http\Message\MessageFactory;
 use Http\Message\StreamFactory;
-use Psr\Http\Message\ResponseInterface;
 
 /**
  * cURL raw response parser
  *
  * @license http://opensource.org/licenses/MIT MIT
  *
- * @author  Михаил Красильников <m.krasilnikov@yandex.ru>
  * @author  Dmitry Arhitector   <dmitry.arhitector@yandex.ru>
-*/
-class ResponseParser
+ */
+class Parser
 {
+    use TemporaryStreamTrait;
 
     /**
      * Raw response headers
@@ -40,13 +40,6 @@ class ResponseParser
     protected $streamFactory;
 
     /**
-     * Temporary resource
-     *
-     * @var resource
-     */
-    protected $temporaryStream;
-
-    /**
      * Receive redirect
      *
      * @var bool
@@ -67,7 +60,44 @@ class ResponseParser
     }
 
     /**
-     * Get factory
+     * Parse cURL response
+     *
+     * @param array $info cURL response info
+     * @param resource $stream $raw raw response
+     *
+     * @return ResponseInterface
+     */
+    public function parse(array $info, $stream = null)
+    {
+        if ( ! is_resource($stream)) {
+            $stream = $this->getTemporaryStream();
+        }
+
+        $parser = new HeadersParser();
+        $response = $parser->parseArray($this->headers, $this->messageFactory->createResponse());
+        $response = $response->withBody($this->streamFactory->createStream($stream));
+
+        $this->setTemporaryStream(null);
+
+        return $response;
+    }
+
+    /**
+     * Set factory.
+     *
+     * @param MessageFactory $messageFactory
+     *
+     * @return $this
+     */
+    public function setMessageFactory(MessageFactory $messageFactory)
+    {
+        $this->messageFactory = $messageFactory;
+
+        return $this;
+    }
+
+    /**
+     * Get factory.
      *
      * @return MessageFactory
      */
@@ -77,7 +107,21 @@ class ResponseParser
     }
 
     /**
-     * Get factory
+     * Set factory.
+     *
+     * @param StreamFactory $streamFactory
+     *
+     * @return $this
+     */
+    public function setStreamFactory(StreamFactory $streamFactory)
+    {
+        $this->streamFactory = $streamFactory;
+
+        return $this;
+    }
+
+    /**
+     * Get factory.
      *
      * @return StreamFactory
      */
@@ -87,54 +131,11 @@ class ResponseParser
     }
 
     /**
-     * Temporary body (fix out of memory)
-     *
-     * @return resource
-     */
-    public function getTemporaryStream()
-    {
-        if ( ! is_resource($this->temporaryStream))
-        {
-            $this->temporaryStream = fopen('php://temp', 'w+');
-        }
-
-        return $this->temporaryStream;
-    }
-
-    /**
-     * Parse cURL response
-     *
-     * @param resource $raw  raw response
-     * @param array    $info cURL response info
-     *
-     * @return ResponseInterface
-     *
-     * @throws \InvalidArgumentException
-     * @throws \RuntimeException
-     */
-    public function parse($raw = null, array $info)
-    {
-        if (empty($raw)) // fix promise out of memory
-        {
-            $raw = $this->getTemporaryStream();
-        }
-
-        $parser = new HeadersParser();
-
-        $response = $parser->parseArray($this->headers, $this->messageFactory->createResponse());
-        $response = $response->withBody($this->streamFactory->createStream($raw));
-
-        $this->temporaryStream = null;
-
-        return $response;
-    }
-
-    /**
      * Save the response headers
-     * 
+     *
      * @param   resource    $handler    curl handler
      * @param   string      $rawHeader     raw header
-     * 
+     *
      * @return integer
      */
     public function headerHandler($handler, $rawHeader)

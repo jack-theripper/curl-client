@@ -23,14 +23,14 @@ class CurlPromise implements Promise
      *
      * @var PromiseCore
      */
-    private $core;
+    protected $core;
 
     /**
      * Requests runner
      *
      * @var MultiRunner
      */
-    private $runner;
+    protected $runner;
 
     /**
      * Create new promise.
@@ -104,6 +104,7 @@ class CurlPromise implements Promise
 
             return $this->core->getResponse();
         }
+
         return null;
     }
 }

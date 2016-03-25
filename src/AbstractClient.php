@@ -34,58 +34,45 @@ class AbstractClient
      */
     public function sendResponse(ResponseInterface $response)
     {
-        if ( ! headers_sent())
-        {
+        if (!headers_sent()) {
             header(sprintf('HTTP/%s %s %s', $response->getProtocolVersion(), $response->getStatusCode(),
                 $response->getReasonPhrase()));
 
-            foreach ($response->getHeaders() as $name => $values)
-            {
-                foreach ($values as $value)
-                {
+            foreach ($response->getHeaders() as $name => $values) {
+                foreach ($values as $value) {
                     header(sprintf('%s: %s', $name, $value), false);
                 }
             }
         }
 
-        if ( ! in_array($response->getStatusCode(), [204, 205, 304]))
-        {
+        if (!in_array($response->getStatusCode(), [204, 205, 304])) {
             $body = $response->getBody();
 
-            if ($body->isSeekable())
-            {
+            if ($body->isSeekable()) {
                 $body->rewind();
             }
 
             $contentLength = $response->getHeaderLine('Content-Length');
 
-            if ( ! $contentLength)
-            {
+            if (!$contentLength) {
                 $contentLength = $body->getSize();
             }
 
-            if (isset($contentLength))
-            {
-                while ( ! $body->eof() && $contentLength > 0)
-                {
+            if (isset($contentLength)) {
+                while (!$body->eof() && $contentLength > 0) {
                     echo $body->read(self::CHUNK_SIZE);
 
-                    if (connection_status() != CONNECTION_NORMAL)
-                    {
+                    if (connection_status() != CONNECTION_NORMAL) {
                         break;
                     }
 
                     $contentLength -= self::CHUNK_SIZE;
                 }
-            }
-            else
-            {
-                while ( ! $body->eof())
-                {
+            } else {
+                while (!$body->eof()) {
                     echo $body->read(self::CHUNK_SIZE);
 
-                    if (connection_status() != CONNECTION_NORMAL)
-                    {
+                    if (connection_status() != CONNECTION_NORMAL) {
                         break;
                     }
                 }

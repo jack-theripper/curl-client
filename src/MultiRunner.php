@@ -2,6 +2,7 @@
 namespace Mackey\Http\Client\Curl;
 
 use Http\Client\Exception\RequestException;
+use Mackey\Http\Client\Curl\Response\Parser;
 
 /**
  * Simultaneous requests runner
@@ -9,6 +10,7 @@ use Http\Client\Exception\RequestException;
  * @license http://opensource.org/licenses/MIT MIT
  *
  * @author  Михаил Красильников <m.krasilnikov@yandex.ru>
+ * @author  Dmitry Arhitector   <dmitry.arhitector@yandex.ru>
  */
 class MultiRunner
 {
@@ -17,40 +19,29 @@ class MultiRunner
      *
      * @var resource|null
      */
-    private $multiHandle = null;
-
-    /**
-     * cURL response parser
-     *
-     * @var ResponseParser
-     */
-    private $responseParser;
+    protected $handle = null;
 
     /**
      * Awaiting cores
      *
      * @var PromiseCore[]
      */
-    private $cores = [];
+    protected $cores = [];
+
+    /**
+     * @var Parser  response parser
+     */
+    protected $responseParser;
 
     /**
      * Construct new runner.
      *
-     * @param ResponseParser $responseParser
+     * @param Parser $response_parser
      */
-    public function __construct(ResponseParser $responseParser)
+    public function __construct(Parser $response_parser)
     {
-        $this->responseParser = $responseParser;
-    }
-
-    /**
-     * Release resources if still active
-     */
-    public function __destruct()
-    {
-        if (is_resource($this->multiHandle)) {
-            curl_multi_close($this->multiHandle);
-        }
+        $this->handle = curl_multi_init();
+        $this->responseParser = $response_parser;
     }
 
     /**
@@ -68,25 +59,8 @@ class MultiRunner
 
         $this->cores[] = $core;
 
-        if (null === $this->multiHandle) {
-            $this->multiHandle = curl_multi_init();
-        }
-        curl_multi_add_handle($this->multiHandle, $core->getHandle());
-    }
-
-    /**
-     * Remove promise from runner
-     *
-     * @param PromiseCore $core
-     */
-    public function remove(PromiseCore $core)
-    {
-        foreach ($this->cores as $index => $existed) {
-            if ($existed === $core) {
-                curl_multi_remove_handle($this->multiHandle, $core->getHandle());
-                unset($this->cores[$index]);
-                return;
-            }
+        if (curl_multi_add_handle($this->handle, $core->getHandle()) !== 0) {
+            throw new \RuntimeException('Handler was not added.');
         }
     }
 
@@ -98,41 +72,62 @@ class MultiRunner
     public function wait(PromiseCore $targetCore = null)
     {
         do {
-            $status = curl_multi_exec($this->multiHandle, $active);
-            $info = curl_multi_info_read($this->multiHandle);
+            $status = curl_multi_exec($this->handle, $active);
+            $info = curl_multi_info_read($this->handle);
+
             if (false !== $info) {
                 $core = $this->findCoreByHandle($info['handle']);
 
                 if (null === $core) {
                     // We have no promise for this handle. Drop it.
-                    curl_multi_remove_handle($this->multiHandle, $info['handle']);
+                    curl_multi_remove_handle($this->handle, $info['handle']);
                     continue;
                 }
 
                 if (CURLE_OK === $info['result']) {
                     try {
                         $response = $this->responseParser->parse(
-                            curl_multi_getcontent($core->getHandle()),
-                            curl_getinfo($core->getHandle())
+                            curl_getinfo($core->getHandle()),
+                            $core->getTemporaryStream()
                         );
                         $core->fulfill($response);
                     } catch (\Exception $e) {
-                        $core->reject(
-                            new RequestException($e->getMessage(), $core->getRequest(), $e)
-                        );
+                        $core->reject(new RequestException($e->getMessage(), $core->getRequest(), $e));
                     }
                 } else {
                     $error = curl_error($core->getHandle());
                     $core->reject(new RequestException($error, $core->getRequest()));
                 }
-                $this->remove($core);
 
-                // This is a promise we are waited for. So exiting wait().
-                if ($core === $targetCore) {
-                    return;
-                }
+                $this->remove($core);
             }
         } while ($status === CURLM_CALL_MULTI_PERFORM || $active);
+    }
+
+    /**
+     * Remove promise from runner
+     *
+     * @param PromiseCore $core
+     */
+    public function remove(PromiseCore $core)
+    {
+        foreach ($this->cores as $index => $existed) {
+            if ($existed === $core) {
+                curl_multi_remove_handle($this->handle, $core->getHandle());
+                unset($this->cores[$index]);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Release resources if still active
+     */
+    public function __destruct()
+    {
+        if (is_resource($this->handle)) {
+            curl_multi_close($this->handle);
+        }
     }
 
     /**
@@ -142,7 +137,7 @@ class MultiRunner
      *
      * @return PromiseCore|null
      */
-    private function findCoreByHandle($handle)
+    protected function findCoreByHandle($handle)
     {
         foreach ($this->cores as $core) {
             if ($core->getHandle() === $handle) {

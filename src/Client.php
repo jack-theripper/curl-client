@@ -9,6 +9,7 @@ use Http\Client\HttpClient as HttpClientInterface;
 use Http\Message\MessageFactory;
 use Http\Message\StreamFactory;
 use Http\Promise\Promise;
+use Mackey\Http\Client\Curl\Response\Parser;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -23,11 +24,10 @@ use Psr\Http\Message\ResponseInterface;
  */
 class Client extends AbstractClient implements HttpClientInterface, HttpAsyncClientInterface
 {
-
     /**
      * cURL response parser
      *
-     * @var ResponseParser
+     * @var Parser
      */
     protected $responseParser;
 
@@ -45,26 +45,25 @@ class Client extends AbstractClient implements HttpClientInterface, HttpAsyncCli
      */
     protected $multiRunner = null;
 
-
     /**
      * Create new client
      *
      * @param MessageFactory $messageFactory HTTP Message factory
-     * @param StreamFactory  $streamFactory  HTTP Stream factory
-     * @param array          $options        cURL options (see http://php.net/curl_setopt)
+     * @param StreamFactory $streamFactory HTTP Stream factory
+     * @param array $options cURL options (see http://php.net/curl_setopt)
      */
     public function __construct(MessageFactory $messageFactory, StreamFactory $streamFactory, array $options = [])
     {
         $this->options = $options;
         $this->handle = curl_init();
-        $this->setResponseParser(new ResponseParser($messageFactory, $streamFactory));
+        $this->setResponseParser(new Parser($messageFactory, $streamFactory));
     }
 
     /**
      * Sends a PSR-7 request.
      *
      * @param RequestInterface $request
-     * @param array            $options custom curl options
+     * @param array $options custom curl options
      *
      * @return ResponseInterface
      *
@@ -78,12 +77,12 @@ class Client extends AbstractClient implements HttpClientInterface, HttpAsyncCli
         curl_reset($this->handle);
         curl_setopt_array($this->handle, $options);
 
-        if ( ! curl_exec($this->handle)) {
+        if (!curl_exec($this->handle)) {
             throw new RequestException(curl_error($this->handle), $request);
         }
 
         try {
-            $response = $this->responseParser->parse($options[CURLOPT_FILE], curl_getinfo($this->handle));
+            $response = $this->getResponseParser()->parse(curl_getinfo($this->handle), $options[CURLOPT_FILE]);
         } catch (\Exception $e) {
             throw new RequestException($e->getMessage(), $request, $e);
         }
@@ -92,55 +91,47 @@ class Client extends AbstractClient implements HttpClientInterface, HttpAsyncCli
     }
 
     /**
-     * Sends a PSR-7 request in an asynchronous way.
+     * Generates cURL options
      *
      * @param RequestInterface $request
-     * @param array            $options custom curl options
+     * @param array $options custom curl options
      *
-     * @return Promise
-     *
-     * @throws Exception
-     * @throws \UnexpectedValueException if unsupported HTTP version requested
-     *
-     * @since 1.0
+     * @return array if unsupported HTTP version requested
      */
-    public function sendAsyncRequest(RequestInterface $request, array $options = [])
+    protected function createCurlOptions(RequestInterface $request, array $options)
     {
-        if ( ! $this->multiRunner instanceof MultiRunner) {
-            $this->multiRunner = new MultiRunner($this->responseParser);
+        $options = array_diff_key($options, array_flip([CURLOPT_INFILE, CURLOPT_INFILESIZE]));
+        $options[CURLOPT_HTTP_VERSION] = $this->getCurlHttpVersion($request->getProtocolVersion());
+        $options[CURLOPT_HEADERFUNCTION] = [$this->getResponseParser(), 'headerHandler'];
+        $options[CURLOPT_CUSTOMREQUEST] = $request->getMethod();
+        $options[CURLOPT_URL] = (string)$request->getUri();
+        $options[CURLOPT_HEADER] = false;
+
+        if (in_array($request->getMethod(), ['GET', 'HEAD', 'TRACE', 'CONNECT'])) {
+            if ($request->getMethod() == 'HEAD') {
+                $options[CURLOPT_NOBODY] = true;
+
+                unset($options[CURLOPT_READFUNCTION], $options[CURLOPT_WRITEFUNCTION]);
+            }
+        } else {
+            $options = $this->createCurlBody($request, $options);
         }
 
-        $handle = curl_init();
-        $options = $this->createCurlOptions($request, $options);
+        $options[CURLOPT_RETURNTRANSFER] = false;
+        $options[CURLOPT_FILE] = $this->getResponseParser()->setTemporaryStream(null)->getTemporaryStream();
+        $options[CURLOPT_HTTPHEADER] = $this->createHeaders($request, $options);
 
-        curl_setopt_array($handle, $options);
+        if ($request->getUri()->getUserInfo()) {
+            $options[CURLOPT_USERPWD] = $request->getUri()->getUserInfo();
+        }
 
-        $core = new PromiseCore($request, $handle);
-        $promise = new CurlPromise($core, $this->multiRunner);
-
-        $this->multiRunner->add($core);
-
-        return $promise;
+        return $options;
     }
 
     /**
-     * Set response parser
+     * Get response parser
      *
-     * @param ResponseParser $responseParser
-     *
-     * @return $this
-     */
-    public function setResponseParser(ResponseParser $responseParser)
-    {
-        $this->responseParser = $responseParser;
-
-        return $this;
-    }
-
-    /**
-     * Get parser
-     *
-     * @return ResponseParser
+     * @return Parser
      */
     public function getResponseParser()
     {
@@ -148,78 +139,18 @@ class Client extends AbstractClient implements HttpClientInterface, HttpAsyncCli
     }
 
     /**
-     * Release resources if still active
+     * Set response parser
+     *
+     * @param Parser $responseParser
+     *
+     * @return $this
      */
-    public function __destruct()
+    public function setResponseParser(Parser $responseParser)
     {
-        if (is_resource($this->handle)) {
-            curl_close($this->handle);
-        }
+        $this->responseParser = $responseParser;
+
+        return $this;
     }
-
-    /**
-     * Generates cURL options
-     *
-     * @param RequestInterface $request
-     * @param array            $options custom curl options
-     *
-     * @throws \UnexpectedValueException if unsupported HTTP version requested
-     *
-     * @return array
-     */
-    protected function createCurlOptions(RequestInterface $request, array $options = [])
-	{
-        // Invalid overwrite Curl options.
-        $options = array_diff_key($options, array_flip([CURLOPT_INFILE, CURLOPT_INFILESIZE]));
-        $options[CURLOPT_HTTP_VERSION] = $this->getCurlHttpVersion($request->getProtocolVersion());
-        $options[CURLOPT_HEADERFUNCTION] = [$this->getResponseParser(), 'headerHandler'];
-        $options[CURLOPT_CUSTOMREQUEST] = $request->getMethod();
-        $options[CURLOPT_URL] = (string) $request->getUri();
-        $options[CURLOPT_RETURNTRANSFER] = false;
-        $options[CURLOPT_FILE] = $this->getResponseParser()->getTemporaryStream();
-        $options[CURLOPT_HEADER] = false;
-
-        // These methods do not transfer body.
-        // You can specify any method you'd like, including a custom method that might not be part of RFC 7231 (like "MOVE").
-		if (in_array($request->getMethod(), ['GET', 'HEAD', 'TRACE', 'CONNECT'])) {
-			if ($request->getMethod() == 'HEAD') {
-				$options[CURLOPT_NOBODY] = true;
-
-                unset($options[CURLOPT_READFUNCTION], $options[CURLOPT_WRITEFUNCTION]);
-			}
-		} else {
-			$body = clone $request->getBody();
-			$size = $body->getSize();
-
-			if ($size === null || $size > 1048576) {
-                $body->rewind();
-                $options[CURLOPT_UPLOAD] = true;
-
-                // Avoid full loading large or unknown size body into memory. Not replace CURLOPT_READFUNCTION.
-                if (isset($options[CURLOPT_READFUNCTION]) && is_callable($options[CURLOPT_READFUNCTION])) {
-                    $body = $body->detach();
-                    $options[CURLOPT_READFUNCTION] = function ($curlHandler, $handler, $length) use ($body, $options) {
-                        return call_user_func($options[CURLOPT_READFUNCTION], $curlHandler, $body, $length);
-                    };
-                } else {
-                    $options[CURLOPT_READFUNCTION] = function ($curl, $handler, $length) use ($body) {
-                        return $body->read($length);
-                    };
-                }
-			} else {
-                // Send the body as a string if the size is less than 1MB.
-				$options[CURLOPT_POSTFIELDS] = (string) $request->getBody();
-			}
-		}
-
-		$options[CURLOPT_HTTPHEADER] = $this->createHeaders($request, $options);
-
-		if ($request->getUri()->getUserInfo()) {
-			$options[CURLOPT_USERPWD] = $request->getUri()->getUserInfo();
-		}
-
-		return $options;
-	}
 
     /**
      * Return cURL constant for specified HTTP version
@@ -234,46 +165,133 @@ class Client extends AbstractClient implements HttpClientInterface, HttpAsyncCli
     {
         if ($version == '1.1') {
             return CURL_HTTP_VERSION_1_1;
-        } else if ($version == '2.0') {
-            if (!defined('CURL_HTTP_VERSION_2_0')) {
-                throw new \UnexpectedValueException('libcurl 7.33 needed for HTTP 2.0 support');
+        } else {
+            if ($version == '2.0') {
+                if (!defined('CURL_HTTP_VERSION_2_0')) {
+                    throw new \UnexpectedValueException('libcurl 7.33 needed for HTTP 2.0 support');
+                }
+
+                return CURL_HTTP_VERSION_2_0;
+            } else {
+                return CURL_HTTP_VERSION_1_0;
+            }
+        }
+    }
+
+    /**
+     * Create body
+     *
+     * @param RequestInterface $request
+     * @param array $options
+     *
+     * @return array
+     */
+    protected function createCurlBody(RequestInterface $request, array $options)
+    {
+        $body = clone $request->getBody();
+        $size = $body->getSize();
+
+        // Avoid full loading large or unknown size body into memory. It doesn't replace "CURLOPT_READFUNCTION".
+        if ($size === null || $size > 1048576) {
+            if ($body->isSeekable()) {
+                $body->rewind();
             }
 
-            return CURL_HTTP_VERSION_2_0;
+            $options[CURLOPT_UPLOAD] = true;
+
+            if (isset($options[CURLOPT_READFUNCTION]) && is_callable($options[CURLOPT_READFUNCTION])) {
+                $body = $body->detach();
+
+                $options[CURLOPT_READFUNCTION] = function ($curl_handler, $handler, $length) use ($body, $options) {
+                    return call_user_func($options[CURLOPT_READFUNCTION], $curl_handler, $body, $length);
+                };
+            } else {
+                $options[CURLOPT_READFUNCTION] = function ($curl, $handler, $length) use ($body) {
+                    return $body->read($length);
+                };
+            }
         } else {
-            return CURL_HTTP_VERSION_1_0;
+            $options[CURLOPT_POSTFIELDS] = (string)$request->getBody();
         }
+
+        return $options;
     }
 
     /**
      * Create headers array for CURLOPT_HTTPHEADER
      *
      * @param RequestInterface $request
-     * @param array            $options cURL options
+     * @param array $options cURL options
      *
      * @return string[]
      */
     protected function createHeaders(RequestInterface $request, array $options)
     {
         $headers = [];
+        $body = $request->getBody();
+        $size = $body->getSize();
 
-        foreach ($request->getHeaders() as $header => $values)
-        {
-            foreach ((array) $values as $value)
-            {
+        foreach ($request->getHeaders() as $header => $values) {
+            foreach ((array)$values as $value) {
                 $headers[] = sprintf('%s: %s', $header, $value);
             }
         }
 
-        if ( ! $request->hasHeader('Content-Length')) {
-        //    $headers[] = 'Content-Length: 0';
+        if (!$request->hasHeader('Transfer-Encoding') && $size === null) {
+            $headers[] = 'Transfer-Encoding: chunked';
         }
 
-        if ( ! $request->hasHeader('Expect')) {
-            $headers[] = 'Expect:';
+        if (!$request->hasHeader('Expect') && in_array($request->getMethod(), ['POST', 'PUT'])) {
+            if ($request->getProtocolVersion() < 2.0 && !$body->isSeekable() || $size === null || $size > 1048576) {
+                $headers[] = 'Expect: 100-Continue';
+            } else {
+                $headers[] = 'Expect: ';
+            }
         }
 
         return $headers;
+    }
+
+    /**
+     * Sends a PSR-7 request in an asynchronous way.
+     *
+     * @param RequestInterface $request
+     * @param array $options custom curl options
+     *
+     * @return Promise
+     *
+     * @throws Exception
+     * @throws \UnexpectedValueException if unsupported HTTP version requested
+     *
+     * @since 1.0
+     */
+    public function sendAsyncRequest(RequestInterface $request, array $options = [])
+    {
+        if (!$this->multiRunner instanceof MultiRunner) {
+            $this->multiRunner = new MultiRunner($this->getResponseParser());
+        }
+
+        $handle = curl_init();
+        $options = $this->createCurlOptions($request, $options);
+
+        curl_setopt_array($handle, $options);
+
+        $core = (new PromiseCore($request, $handle))
+            ->setTemporaryStream($options[CURLOPT_FILE]);
+        $promise = new CurlPromise($core, $this->multiRunner);
+        $this->multiRunner->add($core);
+
+        return $promise;
+    }
+
+    /**
+     * Release resources if still active
+     */
+    public function __destruct()
+    {
+        if (is_resource($this->handle)) {
+            curl_close($this->handle);
+        }
     }
 
 }

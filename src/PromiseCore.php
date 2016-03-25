@@ -3,6 +3,7 @@ namespace Mackey\Http\Client\Curl;
 
 use Http\Client\Exception;
 use Http\Promise\Promise;
+use Mackey\Http\Client\Curl\Response\TemporaryStreamTrait;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -15,54 +16,56 @@ use Psr\Http\Message\ResponseInterface;
  */
 class PromiseCore
 {
+    use TemporaryStreamTrait;
+
     /**
      * HTTP request
      *
      * @var RequestInterface
      */
-    private $request;
+    protected $request;
 
     /**
      * cURL handle
      *
      * @var resource
      */
-    private $handle;
+    protected $handle;
 
     /**
      * Promise state
      *
      * @var string
      */
-    private $state;
+    protected $state;
 
     /**
      * Exception
      *
      * @var Exception|null
      */
-    private $exception = null;
+    protected $exception = null;
 
     /**
      * Functions to call when a response will be available.
      *
      * @var callable[]
      */
-    private $onFulfilled = [];
+    protected $onFulfilled = [];
 
     /**
      * Functions to call when an error happens.
      *
      * @var callable[]
      */
-    private $onRejected = [];
+    protected $onRejected = [];
 
     /**
      * Received response
      *
      * @var ResponseInterface|null
      */
-    private $response = null;
+    protected $response = null;
 
     /**
      * Create shared core.
@@ -72,8 +75,9 @@ class PromiseCore
      */
     public function __construct(RequestInterface $request, $handle)
     {
-        assert('is_resource($handle)');
-        assert('get_resource_type($handle) === "curl"');
+        if ( ! is_resource($handle) && get_resource_type($handle) != 'curl') {
+            throw new \InvalidArgumentException('Invalid cURL handle.');
+        }
 
         $this->request = $request;
         $this->handle = $handle;
@@ -150,6 +154,7 @@ class PromiseCore
         if (null === $this->response) {
             throw new \LogicException('Promise is not fulfilled');
         }
+
         return $this->response;
     }
 
@@ -168,6 +173,7 @@ class PromiseCore
         if (null === $this->exception) {
             throw new \LogicException('Promise is not rejected');
         }
+
         return $this->exception;
     }
 
@@ -214,6 +220,8 @@ class PromiseCore
             $callback = array_shift($callbacks);
             $argument = call_user_func($callback, $argument);
         }
+
         return $argument;
     }
+
 }
